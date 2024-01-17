@@ -1,0 +1,61 @@
+#!/bin/sh
+
+# Define variables
+lockscreenimageurl=""
+imagedir="/Library/Desktop"
+imagefile="Wallpaper.jpg"
+users=$(dscl . -list /Users | grep -v -e '_' -e root -e nobody -e daemon)
+
+##
+## Checking if directory exists and create it if it's missing
+##
+if [ -d $imagedir ]
+then
+    echo "$(date) | Wallpaper dir [$imagedir] already exists"
+else
+    echo "$(date) | Creating [$imagedir]"
+    mkdir -p $imagedir
+fi
+
+##
+## Attempt to download the image file. No point checking if it already exists since we want to overwrite it anyway
+##
+
+echo "$(date) | Downloading Wallpaper from [$lockscreenimageurl] to [$imagedir/$imagefile]"
+curl -L -o $imagedir/$imagefile $lockscreenimageurl
+if [ "$?" = "0" ]; then
+   echo "$(date) | Wallpaper [$lockscreenimageurl] downloaded to [$imagedir/$imagefile]"
+else
+   echo "$(date) | Failed to download wallpaper image from [$lockscreenimageurl]"
+   exit 1
+fi
+
+for i in $users
+
+do
+
+## Set Screensaver to Photo Slideshow
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver 'CleanExit' -string "YES"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver 'PrefsVersion' -int "100"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver 'idleTime' -int "600"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver "moduleDict" -dict-add "name" -string "iLifeSlideshows" '
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver "moduleDict" -dict-add "path" -string "/System/Library/ExtensionKit/Extensions/iLifeSlideshows.appex"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver "moduleDict" -dict-add "type" -int "0" '
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver 'ShowClock' -bool "false"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.screensaver 'tokenRemovalAction' -int "0"'
+
+## Set Screensaver mode to Classic
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.ScreenSaver.iLifeSlideshows 'styleKey' -string "Classic" '
+
+## Photo Slideshow properties
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.ScreenSaverPhotoChooser 'SelectedSource' -int "4"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.ScreenSaverPhotoChooser 'SelectedFolderPath' "/Library/Desktop"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.ScreenSaverPhotoChooser 'ShufflesPhotos' -bool "YES"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.ScreenSaverPhotoChooser "CustomFolderDict" -dict-add "name" -string "Desktop"'
+su - $i -c '/usr/bin/defaults -currentHost write com.apple.ScreenSaverPhotoChooser "CustomFolderDict" -dict-add "identifier" -string "/Library/Desktop"'
+
+killall cfprefsd
+
+done
+
+exit
