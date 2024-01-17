@@ -148,9 +148,8 @@ else
     scutil --set HostName $newDeviceName
     echo "$(date) |  + Device name changed"
 
-    # Notify user that the device name has been changed
-    echo "$(date) | Notifying user that the device name has been changed"
-    osascript -e 'display dialog "Your device name has been changed to '"$newDeviceName"'" with title "Device Name Changed" buttons {"OK"} default button 1'
+    # Notify user that the device name has been changed and ask them to restart
+    osascript -e 'tell app "System Events" to display dialog "Your device name has been changed to '"$newDeviceName"'. Please restart your device to apply the changes." buttons "OK" default button 1 with icon caution with title "Device Name Changed"'
     echo "$(date) |  + Exiting"
     exit 0
 fi
