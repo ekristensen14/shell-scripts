@@ -17,7 +17,20 @@ tenantID=""
 userName=$(ls -l /dev/console | awk '{ print $3 }') 
 headers=(-H "Content-Type: application/x-www-form-urlencoded")
 logDir="/Library/logs/Microsoft/IntuneScripts/RenameHost"
+logoUrl="https://p44itautomations.blob.core.windows.net/logos/p44Logo_Circle_Blue.png"
+logoDir="/Library/Logos"
+logoFile="logo.png"
 
+if [ -d $logoDir ]; then
+    ## Already created
+    echo "$(date) | logo directory already exists - $logoDir"
+else
+    ## Creating Metadirectory
+    echo "$(date) | creating logo directory - $logoDir"
+    mkdir -p $logoDir
+fi
+logo=$logoDir/$logoFile
+curl -o $logo $logoUrl
 # Generated Variables
 url="https://login.microsoftonline.com/$tenantID/oauth2/v2.0/token"
 #data="client_id=$clientID&scope=https%3A%2F%2Fgraph.microsoft.com%2F.default&client_secret=$secretValue&grant_type=client_credentials"
@@ -149,7 +162,20 @@ else
     echo "$(date) |  + Device name changed"
 
     # Notify user that the device name has been changed and ask them to restart
-    osascript -e 'tell app "System Events" to display dialog "Your device name has been changed to '"$newDeviceName"'. Please restart your device to apply the changes." buttons "OK" default button 1 with icon caution with title "Device Name Changed"'
-    echo "$(date) |  + Exiting"
-    exit 0
+    title="Device Name Changed"
+    message="Your device name has been changed to $newDeviceName."
+    message4="Please restart your device to apply the change."
+    message2="Thank you for your cooperation."
+    message3="project44 IT Team"
+    combined="$message\n\n$message4\n\n$message2\n\n$message3\n\n"
+
+    # Display the message with the logo appended to the right
+    osascript -e 'tell app "System Events" to display dialog "'"$combined"'" with title "'"$title"'" buttons {"Restart Now", "Exit"} default button 2 giving up after 86400'
+    if [ "$?" == "0" ]; then
+        # User chose "Exit"
+        exit 0
+    else
+        # User chose "Restart Now"
+        sudo shutdown -r now
+    fi
 fi
