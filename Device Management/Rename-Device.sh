@@ -1,5 +1,5 @@
 #!/bin/bash
-Ver="2401.17"
+Ver="2401.23"
 #set -x
 
 ############################################################################################
@@ -17,9 +17,6 @@ tenantID=""
 userName=$(ls -l /dev/console | awk '{ print $3 }') 
 headers=(-H "Content-Type: application/x-www-form-urlencoded")
 logDir="/Library/logs/Microsoft/IntuneScripts/RenameHost"
-logoUrl="https://p44itautomations.blob.core.windows.net/logos/p44Logo_Circle_Blue.png"
-logoDir="/Library/Logos"
-logoFile="logo.png"
 
 if [ -d $logoDir ]; then
     ## Already created
@@ -29,8 +26,7 @@ else
     echo "$(date) | creating logo directory - $logoDir"
     mkdir -p $logoDir
 fi
-logo=$logoDir/$logoFile
-curl -o $logo $logoUrl
+
 # Generated Variables
 url="https://login.microsoftonline.com/$tenantID/oauth2/v2.0/token"
 #data="client_id=$clientID&scope=https%3A%2F%2Fgraph.microsoft.com%2F.default&client_secret=$secretValue&grant_type=client_credentials"
@@ -114,10 +110,11 @@ echo "$(date) | getting the display name"
 # Get displayname and select only first and lastname
 fullname=$(curl -s --location --request GET "$fullnameURL" --header "${headers2[@]}" | sed -E 's/.*"displayName":"([^"]+)".*/\1/' | awk '{print $1, $NF}')
 
-# Generate the new device name, limiting at 15 characters. Starting with "p44-" and adding the first initial and last name all in lowercase
-newDeviceName="p44-$(echo $fullname | awk '{print $1}' | cut -c1)$(echo $fullname | awk '{print $2}' | cut -c1-14)"
+# Generate the new device name, limiting at 14 characters (to make room for a number). Starting with "p44-" and adding the first initial and last name all in lowercase
+baseDeviceName="p44-$(echo $fullname | awk '{print $1}' | cut -c1)$(echo $fullname | awk '{print $2}' | cut -c1-13)"
 # Set newDeviceName to lowercase
-newDeviceName=$(echo $newDeviceName | tr '[:upper:]' '[:lower:]')
+baseDeviceName=$(echo $baseDeviceName | tr '[:upper:]' '[:lower:]')
+newDeviceName=$baseDeviceName
 
 # Get the current device name
 currentDeviceName=$(scutil --get ComputerName)
@@ -126,17 +123,14 @@ currentDeviceName=$(scutil --get ComputerName)
 if [[ $currentDeviceName == p44-* ]]; then
     echo "$(date) | Device name already begins with p44-"
     echo "$(date) |  + Current Device Name: $currentDeviceName"
-    echo "$(date) |  + New Device Name: $newDeviceName"
     echo "$(date) |  + Exiting"
     exit 0
 else
     echo "$(date) | Device name does not begin with p44-"
     echo "$(date) |  + Current Device Name: $currentDeviceName"
-    echo "$(date) |  + New Device Name: $newDeviceName"
     # Check if the new device name is already in use in Intune
     echo "$(date) | Checking if the new device name is already in use in Intune"
-    filter='$filter=devicename eq '\'''"$newDeviceName"''\'''
-    deviceNameInUse=$(curl -s --location --request GET "https://graph.microsoft.com/beta/devices/?$filter" --header "${headers2[@]}" | grep -c $newDeviceName)
+    deviceNameInUse=$(curl -s --location --request GET --header "${headers2[@]}" "https://graph.microsoft.com/beta/deviceManagement/managedDevices/?\$filter=devicename%20eq%20'$newDeviceName'" | grep -io "$newDeviceName" | wc -l)
     # If the device name is already in use, add a number starting from 2 to the end of the device name
     if [[ $deviceNameInUse -gt 0 ]]; then
         echo "$(date) | Device name is already in use in Intune"
@@ -146,36 +140,114 @@ else
         # Loop until the device name is not in use
         while [[ $deviceNameInUse -gt 0 ]]; do
             # Add the number to the end of the device name
-            newDeviceName="$newDeviceName$number"
+            newDeviceName="$baseDeviceName$number"
             # Check if the new device name is already in use in Intune
-            deviceNameInUse=$(curl -s --location --request GET "https://graph.microsoft.com/beta/devices/?$filter" --header "${headers2[@]}" | grep -c $newDeviceName)
+            deviceNameInUse=$(curl -s --location --request GET --header "${headers2[@]}" "https://graph.microsoft.com/beta/deviceManagement/managedDevices/?\$filter=devicename%20eq%20'$newDeviceName'" | grep -io "$newDeviceName" | wc -l)
             # Increment the number
             ((number++))
         done
         echo "$(date) |  + New Device Name: $newDeviceName"
+    else 
+        # If the device name is not in use, set the new device name to the base device name
+        newDeviceName=$baseDeviceName
+        echo "$(date) |  + New Device Name: $newDeviceName"    
     fi
 
     # Set the new device name
     scutil --set ComputerName $newDeviceName
     scutil --set LocalHostName $newDeviceName
     scutil --set HostName $newDeviceName
-    echo "$(date) |  + Device name changed"
+    sudo echo "$(date) |  + Device name changed"
+
+    
 
     # Notify user that the device name has been changed and ask them to restart
     title="Device Name Changed"
-    message="Your device name has been changed to $newDeviceName."
+    message="Your device name has been changed to comply with company IT standards."
     message4="Please restart your device to apply the change."
     message2="Thank you for your cooperation."
     message3="project44 IT Team"
-    combined="$message\n\n$message4\n\n$message2\n\n$message3\n\n"
+    combined="$message\n\n$message4\n\n$message2\n\n$message3"
 
-    # Display the message with the logo appended to the right
-    osascript -e 'tell app "System Events" to display dialog "'"$combined"'" with title "'"$title"'" buttons {"Restart Now", "Exit"} default button 2 giving up after 86400'
-    if [ "$?" == "0" ]; then
-        # User chose "Exit"
-        exit 0
-    else
-        # User chose "Restart Now"
-        sudo shutdown -r now
-    fi
+    # Get the currently logged in user's name
+    userName=$(stat -f%Su /dev/console)
+
+    # Get the user's ID
+    uid=$(id -u $userName)
+
+    # Get the user's login session ID
+    loginSessionId=$(sudo launchctl asuser $uid launchctl list | grep -v PID | awk '/com.apple.*/ { print $3; exit }')
+
+    # Create a .plist file for the task
+    mkdir -p /Users/$userName/Library/LaunchAgents
+
+    # Create a shell script that waits for Microsoft Defender to start, performs the scan, and then deletes the .plist file
+    echo '#!/bin/sh
+# Wait for Dock to start
+until ps aux | grep /System/Library/CoreServices/Dock.app/Contents/MacOS/Dock | grep -v grep &>/dev/null; do
+    delay=$(( $RANDOM % 50 + 10 ))
+    echo "$(date) |  + Dock not running, waiting [$delay] seconds"
+    sleep $delay
+done
+
+echo "$(date) | Dock is here, lets carry on"
+
+# Wait for Microsoft Defender to start
+while ! pgrep -x "wdavdaemon" > /dev/null;
+do
+    delay=$(( $RANDOM % 50 + 10 ))
+    echo "$(date) |  + Defender not running, waiting [$delay] seconds"
+    sleep $delay
+done
+
+mdatp scan quick
+
+launchctl unload /Users/'$userName'/Library/LaunchAgents/com.project44.mdatpscan.plist' > /Users/$userName/Library/LaunchAgents/mdatpscan.sh
+
+    # Make the shell script executable
+    chmod a+x /Users/$userName/Library/LaunchAgents/mdatpscan.sh
+    
+
+    echo '<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.project44.mdatpscan</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/'$userName'/Library/LaunchAgents/mdatpscan.sh</string>
+    </array>
+</dict>
+</plist>' > /Users/$userName/Library/LaunchAgents/com.project44.mdatpscan.plist
+
+    # Load the task into launchd
+    chown $userName /Users/$userName/Library/LaunchAgents/mdatpscan.sh /Users/$userName/Library/LaunchAgents/com.project44.mdatpscan.plist
+    sudo launchctl asuser $uid launchctl bootstrap gui/$uid /Users/$userName/Library/LaunchAgents/com.project44.mdatpscan.plist
+
+    display_dialog() {
+        # Run the osascript command in the user's context
+        userChoice=$(sudo launchctl asuser $uid sudo -u $userName osascript -e 'tell app "System Events" to display dialog "'"$combined"'" with title "'"$title"'" buttons {"Restart Now", "Defer for 1 Hour"} default button 2 giving up after 3600')
+    }
+
+    handle_user_choice() {
+        if [[ $userChoice == *"Restart Now"* ]]; then
+            # Restart the device
+            echo "$(date) | User chose to restart now"
+            sudo shutdown -r now
+        elif [[ $userChoice == *"Defer for 1 Hour"* ]]; then
+            # User chose "Defer for 1 Hour"
+            # Schedule the script to display the dialog again in 1 hour
+            (sleep 3600 && run_dialog) &
+        fi
+    }
+
+    run_dialog() {
+        display_dialog
+        handle_user_choice
+    }
+
+    # Call the function
+    run_dialog
+
 fi
